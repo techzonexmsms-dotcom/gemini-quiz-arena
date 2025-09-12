@@ -1,0 +1,464 @@
+import { useState, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/components/ui/use-toast";
+import { supabase } from "@/integrations/supabase/client";
+import { Users, Trophy, Timer, Crown, ArrowLeft } from "lucide-react";
+import { PlayersList } from "./PlayersList";
+import { QuestionCard } from "./QuestionCard";
+import { GameResults } from "./GameResults";
+
+interface GameRoomProps {
+  roomData: any;
+  playerName: string;
+  onLeaveRoom: () => void;
+}
+
+export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) => {
+  const [players, setPlayers] = useState<any[]>([]);
+  const [currentQuestion, setCurrentQuestion] = useState<any>(null);
+  const [gameStatus, setGameStatus] = useState(roomData.status);
+  const [timeLeft, setTimeLeft] = useState(15);
+  const [hasAnswered, setHasAnswered] = useState(false);
+  const [isHost, setIsHost] = useState(false);
+  const [winner, setWinner] = useState<any>(null);
+  const [currentPlayerId, setCurrentPlayerId] = useState<string>('');
+  const { toast } = useToast();
+
+  useEffect(() => {
+    loadPlayersAndStatus();
+    setupRealtimeSubscriptions();
+    
+    return () => {
+      // Cleanup subscriptions
+    };
+  }, []);
+
+  const loadPlayersAndStatus = async () => {
+    try {
+      // Load players
+      const { data: playersData, error: playersError } = await supabase
+        .from('players')
+        .select('*')
+        .eq('room_id', roomData.id)
+        .order('score', { ascending: false });
+
+      if (playersError) throw playersError;
+
+      setPlayers(playersData || []);
+      
+      // Find current player
+      const currentPlayer = playersData?.find(p => p.name === playerName);
+      if (currentPlayer) {
+        setIsHost(currentPlayer.is_host);
+        setCurrentPlayerId(currentPlayer.id);
+      }
+
+      // Check for winner
+      const topScorer = playersData?.find(p => p.score >= 20);
+      if (topScorer) {
+        setWinner(topScorer);
+        setGameStatus('finished');
+      }
+
+      // Load current question if game is playing
+      if (gameStatus === 'playing') {
+        loadCurrentQuestion();
+      }
+
+    } catch (error) {
+      console.error('Error loading players:', error);
+    }
+  };
+
+  const loadCurrentQuestion = async () => {
+    try {
+      const { data: questionData, error } = await supabase
+        .from('room_questions')
+        .select('*')
+        .eq('room_id', roomData.id)
+        .eq('is_active', true)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error;
+
+      if (questionData) {
+        setCurrentQuestion(questionData);
+        
+        // Check if player already answered this question
+        const { data: answerData } = await supabase
+          .from('player_answers')
+          .select('*')
+          .eq('player_id', currentPlayerId)
+          .eq('question_id', questionData.id)
+          .single();
+
+        setHasAnswered(!!answerData);
+      }
+    } catch (error) {
+      console.error('Error loading question:', error);
+    }
+  };
+
+  const setupRealtimeSubscriptions = () => {
+    // Subscribe to players changes
+    const playersChannel = supabase
+      .channel('players-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'players',
+          filter: `room_id=eq.${roomData.id}`
+        },
+        () => loadPlayersAndStatus()
+      )
+      .subscribe();
+
+    // Subscribe to room changes
+    const roomChannel = supabase
+      .channel('room-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'rooms',
+          filter: `id=eq.${roomData.id}`
+        },
+        (payload) => {
+          const newRoom = payload.new as any;
+          setGameStatus(newRoom.status);
+          if (newRoom.status === 'playing') {
+            loadCurrentQuestion();
+          }
+        }
+      )
+      .subscribe();
+
+    // Subscribe to questions changes
+    const questionsChannel = supabase
+      .channel('questions-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'room_questions',
+          filter: `room_id=eq.${roomData.id}`
+        },
+        () => loadCurrentQuestion()
+      )
+      .subscribe();
+  };
+
+  const startGame = async () => {
+    if (!isHost) return;
+
+    try {
+      // Update room status to playing
+      const { error } = await supabase
+        .from('rooms')
+        .update({ status: 'playing' })
+        .eq('id', roomData.id);
+
+      if (error) throw error;
+
+      // Activate first question
+      await activateNextQuestion();
+
+      toast({
+        title: "بدأت اللعبة!",
+        description: "حظاً موفقاً لجميع اللاعبين",
+      });
+
+    } catch (error) {
+      console.error('Error starting game:', error);
+      toast({
+        title: "خطأ",
+        description: "فشل في بدء اللعبة",
+        variant: "destructive"
+      });
+    }
+  };
+
+  const activateNextQuestion = async () => {
+    try {
+      // Deactivate current question
+      await supabase
+        .from('room_questions')
+        .update({ is_active: false })
+        .eq('room_id', roomData.id);
+
+      // Get next question
+      const { data: nextQuestion, error } = await supabase
+        .from('room_questions')
+        .select('*')
+        .eq('room_id', roomData.id)
+        .order('question_order')
+        .limit(1)
+        .single();
+
+      if (error) {
+        // No more questions, generate new ones
+        await supabase.functions.invoke('generate-questions', {
+          body: { roomId: roomData.id }
+        });
+        
+        // Try again
+        const { data: newQuestion, error: newError } = await supabase
+          .from('room_questions')
+          .select('*')
+          .eq('room_id', roomData.id)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .single();
+
+        if (newError) throw newError;
+        
+        // Activate new question
+        await supabase
+          .from('room_questions')
+          .update({ is_active: true })
+          .eq('id', newQuestion.id);
+
+      } else {
+        // Activate next question
+        await supabase
+          .from('room_questions')
+          .update({ is_active: true })
+          .eq('id', nextQuestion.id);
+      }
+
+      // Update room with question start time
+      await supabase
+        .from('rooms')
+        .update({ 
+          question_start_time: new Date().toISOString()
+        })
+        .eq('id', roomData.id);
+
+      setTimeLeft(15);
+      setHasAnswered(false);
+
+    } catch (error) {
+      console.error('Error activating next question:', error);
+    }
+  };
+
+  const submitAnswer = async (selectedAnswer: number) => {
+    if (!currentQuestion || hasAnswered || !currentPlayerId) return;
+
+    try {
+      const isCorrect = selectedAnswer === currentQuestion.correct_answer;
+      let pointsEarned = 0;
+
+      if (isCorrect) {
+        pointsEarned = 2;
+      } else {
+        pointsEarned = -1;
+      }
+
+      // Submit answer
+      const { error: answerError } = await supabase
+        .from('player_answers')
+        .insert({
+          room_id: roomData.id,
+          player_id: currentPlayerId,
+          question_id: currentQuestion.id,
+          selected_answer: selectedAnswer,
+          is_correct: isCorrect,
+          answered_at: new Date().toISOString(),
+          points_earned: pointsEarned
+        });
+
+      if (answerError) throw answerError;
+
+      // Update player score
+      const currentPlayer = players.find(p => p.id === currentPlayerId);
+      const newScore = Math.max(0, currentPlayer.score + pointsEarned);
+
+      const { error: scoreError } = await supabase
+        .from('players')
+        .update({ 
+          score: newScore,
+          last_answer_time: new Date().toISOString()
+        })
+        .eq('id', currentPlayerId);
+
+      if (scoreError) throw scoreError;
+
+      setHasAnswered(true);
+
+      toast({
+        title: isCorrect ? "إجابة صحيحة! 🎉" : "إجابة خاطئة",
+        description: `${pointsEarned > 0 ? '+' : ''}${pointsEarned} نقطة`,
+        variant: isCorrect ? "default" : "destructive"
+      });
+
+      // Check for winner
+      if (newScore >= 20) {
+        await supabase
+          .from('rooms')
+          .update({ status: 'finished' })
+          .eq('id', roomData.id);
+      }
+
+    } catch (error) {
+      console.error('Error submitting answer:', error);
+      toast({
+        title: "خطأ",
+        description: "فشل في إرسال الإجابة",
+        variant: "destructive"
+      });
+    }
+  };
+
+  // Timer effect
+  useEffect(() => {
+    if (gameStatus === 'playing' && currentQuestion && !hasAnswered) {
+      const timer = setInterval(() => {
+        setTimeLeft(prev => {
+          if (prev <= 1) {
+            // Time's up - submit no answer
+            handleTimeUp();
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      return () => clearInterval(timer);
+    }
+  }, [gameStatus, currentQuestion, hasAnswered]);
+
+  const handleTimeUp = async () => {
+    if (!currentPlayerId || hasAnswered) return;
+
+    try {
+      // Submit empty answer with penalty
+      const { error: answerError } = await supabase
+        .from('player_answers')
+        .insert({
+          room_id: roomData.id,
+          player_id: currentPlayerId,
+          question_id: currentQuestion.id,
+          selected_answer: null,
+          is_correct: false,
+          answered_at: new Date().toISOString(),
+          points_earned: -1
+        });
+
+      if (answerError) throw answerError;
+
+      // Update player score
+      const currentPlayer = players.find(p => p.id === currentPlayerId);
+      const newScore = Math.max(0, currentPlayer.score - 1);
+
+      await supabase
+        .from('players')
+        .update({ score: newScore })
+        .eq('id', currentPlayerId);
+
+      setHasAnswered(true);
+
+      toast({
+        title: "انتهى الوقت! ⏰",
+        description: "خصم نقطة واحدة",
+        variant: "destructive"
+      });
+
+    } catch (error) {
+      console.error('Error handling timeout:', error);
+    }
+  };
+
+  if (gameStatus === 'finished' || winner) {
+    return <GameResults players={players} winner={winner} onLeaveRoom={onLeaveRoom} />;
+  }
+
+  return (
+    <div className="min-h-screen bg-background p-4">
+      {/* Header */}
+      <div className="container mx-auto mb-6">
+        <div className="flex items-center justify-between mb-4">
+          <Button variant="ghost" onClick={onLeaveRoom} className="text-muted-foreground">
+            <ArrowLeft className="w-4 h-4 ml-2" />
+            العودة للقائمة
+          </Button>
+          <Badge variant="outline" className="font-mono text-lg px-4 py-2">
+            {roomData.room_code}
+          </Badge>
+        </div>
+
+        <div className="grid md:grid-cols-3 gap-4 mb-6">
+          <Card className="bg-gradient-card">
+            <CardContent className="p-4 text-center">
+              <Users className="w-6 h-6 text-primary mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">اللاعبين</p>
+              <p className="text-xl font-bold">{players.length}/{roomData.max_players}</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-card">
+            <CardContent className="p-4 text-center">
+              <Trophy className="w-6 h-6 text-warning mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">الهدف</p>
+              <p className="text-xl font-bold">20 نقطة</p>
+            </CardContent>
+          </Card>
+
+          <Card className="bg-gradient-card">
+            <CardContent className="p-4 text-center">
+              <Timer className="w-6 h-6 text-secondary mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">الوقت المتبقي</p>
+              <p className="text-xl font-bold">{timeLeft}s</p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+
+      <div className="container mx-auto grid lg:grid-cols-3 gap-6">
+        {/* Players List */}
+        <div className="lg:col-span-1">
+          <PlayersList players={players} currentPlayerName={playerName} />
+        </div>
+
+        {/* Game Area */}
+        <div className="lg:col-span-2">
+          {gameStatus === 'waiting' && (
+            <Card className="bg-gradient-card">
+              <CardHeader className="text-center">
+                <CardTitle className="flex items-center justify-center gap-2">
+                  <Crown className="w-6 h-6 text-warning" />
+                  في انتظار بدء اللعبة
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="text-center space-y-4">
+                <p className="text-muted-foreground">
+                  يحتاج المضيف لبدء اللعبة عندما يكون جميع اللاعبين جاهزين
+                </p>
+                {isHost && (
+                  <Button variant="hero" size="lg" onClick={startGame}>
+                    بدء اللعبة
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {gameStatus === 'playing' && currentQuestion && (
+            <QuestionCard 
+              question={currentQuestion}
+              timeLeft={timeLeft}
+              hasAnswered={hasAnswered}
+              onSubmitAnswer={submitAnswer}
+            />
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
