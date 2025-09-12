@@ -14,13 +14,219 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      player_answers: {
+        Row: {
+          answered_at: string | null
+          id: string
+          is_correct: boolean | null
+          player_id: string
+          points_earned: number
+          question_id: string
+          room_id: string
+          selected_answer: number | null
+        }
+        Insert: {
+          answered_at?: string | null
+          id?: string
+          is_correct?: boolean | null
+          player_id: string
+          points_earned?: number
+          question_id: string
+          room_id: string
+          selected_answer?: number | null
+        }
+        Update: {
+          answered_at?: string | null
+          id?: string
+          is_correct?: boolean | null
+          player_id?: string
+          points_earned?: number
+          question_id?: string
+          room_id?: string
+          selected_answer?: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "player_answers_player_id_fkey"
+            columns: ["player_id"]
+            isOneToOne: false
+            referencedRelation: "players"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "player_answers_question_id_fkey"
+            columns: ["question_id"]
+            isOneToOne: false
+            referencedRelation: "room_questions"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "player_answers_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      players: {
+        Row: {
+          id: string
+          is_host: boolean
+          joined_at: string
+          last_answer_time: string | null
+          name: string
+          room_id: string
+          score: number
+        }
+        Insert: {
+          id?: string
+          is_host?: boolean
+          joined_at?: string
+          last_answer_time?: string | null
+          name: string
+          room_id: string
+          score?: number
+        }
+        Update: {
+          id?: string
+          is_host?: boolean
+          joined_at?: string
+          last_answer_time?: string | null
+          name?: string
+          room_id?: string
+          score?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "players_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      questions: {
+        Row: {
+          category: string | null
+          correct_answer: number
+          created_at: string
+          id: string
+          options: Json
+          question_text: string
+        }
+        Insert: {
+          category?: string | null
+          correct_answer: number
+          created_at?: string
+          id?: string
+          options: Json
+          question_text: string
+        }
+        Update: {
+          category?: string | null
+          correct_answer?: number
+          created_at?: string
+          id?: string
+          options?: Json
+          question_text?: string
+        }
+        Relationships: []
+      }
+      room_questions: {
+        Row: {
+          correct_answer: number
+          created_at: string
+          id: string
+          is_active: boolean
+          options: Json
+          question_order: number
+          question_text: string
+          room_id: string
+        }
+        Insert: {
+          correct_answer: number
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          options: Json
+          question_order: number
+          question_text: string
+          room_id: string
+        }
+        Update: {
+          correct_answer?: number
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          options?: Json
+          question_order?: number
+          question_text?: string
+          room_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "room_questions_room_id_fkey"
+            columns: ["room_id"]
+            isOneToOne: false
+            referencedRelation: "rooms"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      rooms: {
+        Row: {
+          created_at: string
+          current_players: number
+          current_question_id: string | null
+          host_id: string | null
+          id: string
+          max_players: number
+          question_start_time: string | null
+          room_code: string
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          current_players?: number
+          current_question_id?: string | null
+          host_id?: string | null
+          id?: string
+          max_players: number
+          question_start_time?: string | null
+          room_code: string
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          current_players?: number
+          current_question_id?: string | null
+          host_id?: string | null
+          id?: string
+          max_players?: number
+          question_start_time?: string | null
+          room_code?: string
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      cleanup_old_questions: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
+      generate_room_code: {
+        Args: Record<PropertyKey, never>
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never
