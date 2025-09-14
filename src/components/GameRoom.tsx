@@ -61,11 +61,16 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
       setPlayers(playersData || []);
       
-      // Find current player
-      const currentPlayer = playersData?.find(p => p.name === playerName);
+      // Find current player with better matching
+      const currentPlayer = playersData?.find(p => p.name.trim() === playerName.trim());
+      console.log('Finding player:', { playerName, playersData, currentPlayer });
+      
       if (currentPlayer) {
+        console.log('Setting host status:', currentPlayer.is_host);
         setIsHost(currentPlayer.is_host);
         setCurrentPlayerId(currentPlayer.id);
+      } else {
+        console.warn('Current player not found!', { playerName, availablePlayers: playersData?.map(p => p.name) });
       }
 
       // Update room state
@@ -544,10 +549,16 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
                 <p className="text-muted-foreground">
                   يحتاج المضيف لبدء اللعبة عندما يكون جميع اللاعبين جاهزين
                 </p>
-                {isHost && (
+                {/* Debug info */}
+                <div className="text-xs text-muted-foreground">
+                  Player: {playerName} | Is Host: {isHost.toString()} | Player ID: {currentPlayerId}
+                </div>
+                {isHost ? (
                   <Button variant="hero" size="lg" onClick={startGame}>
                     بدء اللعبة
                   </Button>
+                ) : (
+                  <p className="text-sm text-muted-foreground">انتظار المضيف لبدء اللعبة...</p>
                 )}
               </CardContent>
             </Card>
