@@ -24,6 +24,9 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
   const [isHost, setIsHost] = useState(false);
   const [winner, setWinner] = useState<any>(null);
   const [currentPlayerId, setCurrentPlayerId] = useState<string>('');
+  const [questionStartTime, setQuestionStartTime] = useState<string | null>(null);
+  const [currentQuestionId, setCurrentQuestionId] = useState<string | null>(null);
+  const [isAdvancing, setIsAdvancing] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -37,14 +40,24 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
   const loadPlayersAndStatus = async () => {
     try {
-      // Load players
-      const { data: playersData, error: playersError } = await supabase
-        .from('players')
-        .select('*')
-        .eq('room_id', roomData.id)
-        .order('score', { ascending: false });
+      const [
+        { data: playersData, error: playersError },
+        { data: roomRow, error: roomError }
+      ] = await Promise.all([
+        supabase
+          .from('players')
+          .select('*')
+          .eq('room_id', roomData.id)
+          .order('score', { ascending: false }),
+        supabase
+          .from('rooms')
+          .select('status, question_start_time, current_question_id')
+          .eq('id', roomData.id)
+          .maybeSingle(),
+      ]);
 
       if (playersError) throw playersError;
+      if (roomError) console.warn('Room fetch warning:', roomError);
 
       setPlayers(playersData || []);
       
@@ -55,6 +68,13 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         setCurrentPlayerId(currentPlayer.id);
       }
 
+      // Update room state
+      if (roomRow) {
+        setGameStatus(roomRow.status);
+        setQuestionStartTime(roomRow.question_start_time);
+        setCurrentQuestionId(roomRow.current_question_id ?? null);
+      }
+
       // Check for winner
       const topScorer = playersData?.find(p => p.score >= 20);
       if (topScorer) {
@@ -63,12 +83,13 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
       }
 
       // Load current question if game is playing
-      if (gameStatus === 'playing') {
-        loadCurrentQuestion();
+      const statusToCheck = roomRow?.status ?? gameStatus;
+      if (statusToCheck === 'playing') {
+        await loadCurrentQuestion();
       }
 
     } catch (error) {
-      console.error('Error loading players:', error);
+      console.error('Error loading room/players:', error);
     }
   };
 
