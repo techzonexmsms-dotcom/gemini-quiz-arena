@@ -94,7 +94,7 @@ export const QuestionCard = ({
         {hasAnswered && (
           <div className="text-center p-4 bg-primary/10 rounded-lg border border-primary/20">
             <p className="text-sm text-muted-foreground">
-              تم تسجيل إجابتك. في انتظار باقي اللاعبين...
+              تم تسجيل إجابتك. في انتظار باقي اللاعبين أو انتهاء الوقت...
             </p>
           </div>
         )}

@@ -206,38 +206,55 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
   };
 
   const activateNextQuestion = async () => {
+    if (isAdvancing) return; // Prevent multiple simultaneous calls
+    
     try {
-      // Deactivate current question
+      // Deactivate all current questions
       await supabase
         .from('room_questions')
         .update({ is_active: false })
         .eq('room_id', roomData.id);
 
-      // Get next question
+      // Get next unused question in order
       const { data: nextQuestion, error } = await supabase
         .from('room_questions')
         .select('*')
         .eq('room_id', roomData.id)
+        .eq('is_active', false)
         .order('question_order')
         .limit(1)
-        .single();
+        .maybeSingle();
 
       if (error) {
+        console.error('Error fetching next question:', error);
+        return;
+      }
+
+      if (!nextQuestion) {
         // No more questions, generate new ones
+        console.log('No more questions available, generating new ones...');
+        
         await supabase.functions.invoke('generate-questions', {
           body: { roomId: roomData.id }
         });
         
-        // Try again
+        // Wait a bit for generation to complete
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
+        // Try to get a new question
         const { data: newQuestion, error: newError } = await supabase
           .from('room_questions')
           .select('*')
           .eq('room_id', roomData.id)
+          .eq('is_active', false)
           .order('created_at', { ascending: false })
           .limit(1)
-          .single();
+          .maybeSingle();
 
-        if (newError) throw newError;
+        if (newError || !newQuestion) {
+          console.error('Failed to get new question after generation');
+          return;
+        }
         
         // Activate new question
         await supabase
@@ -245,22 +262,33 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           .update({ is_active: true })
           .eq('id', newQuestion.id);
 
+        // Update room with new question and start time
+        await supabase
+          .from('rooms')
+          .update({ 
+            current_question_id: newQuestion.id,
+            question_start_time: new Date().toISOString()
+          })
+          .eq('id', roomData.id);
+
       } else {
         // Activate next question
         await supabase
           .from('room_questions')
           .update({ is_active: true })
           .eq('id', nextQuestion.id);
+
+        // Update room with question info and start time
+        await supabase
+          .from('rooms')
+          .update({ 
+            current_question_id: nextQuestion.id,
+            question_start_time: new Date().toISOString()
+          })
+          .eq('id', roomData.id);
       }
 
-      // Update room with question start time
-      await supabase
-        .from('rooms')
-        .update({ 
-          question_start_time: new Date().toISOString()
-        })
-        .eq('id', roomData.id);
-
+      // Reset local state for new question
       setTimeLeft(15);
       setHasAnswered(false);
 
@@ -337,29 +365,82 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
     }
   };
 
-  // Timer effect
+  // Timer effect - synchronized with database question_start_time
   useEffect(() => {
-    if (gameStatus === 'playing' && currentQuestion && !hasAnswered) {
+    if (gameStatus === 'playing' && currentQuestion && questionStartTime) {
       const timer = setInterval(() => {
-        setTimeLeft(prev => {
-          if (prev <= 1) {
-            // Time's up - submit no answer
-            handleTimeUp();
-            return 0;
-          }
-          return prev - 1;
-        });
+        const now = new Date().getTime();
+        const startTime = new Date(questionStartTime).getTime();
+        const elapsed = Math.floor((now - startTime) / 1000);
+        const remaining = Math.max(0, 15 - elapsed);
+        
+        setTimeLeft(remaining);
+        
+        if (remaining <= 0 && !hasAnswered) {
+          handleTimeUp();
+        }
       }, 1000);
 
       return () => clearInterval(timer);
     }
-  }, [gameStatus, currentQuestion, hasAnswered]);
+  }, [gameStatus, currentQuestion, questionStartTime, hasAnswered]);
+
+  // Check if all players answered and advance to next question
+  useEffect(() => {
+    if (gameStatus === 'playing' && currentQuestion && !isAdvancing) {
+      const checkAllAnswered = async () => {
+        try {
+          const { count: answersCount } = await supabase
+            .from('player_answers')
+            .select('player_id', { count: 'exact' })
+            .eq('room_id', roomData.id)
+            .eq('question_id', currentQuestion.id);
+
+          const totalPlayers = players.length;
+          
+          if (totalPlayers > 0) {
+            // If all players answered OR time is up, advance to next question
+            const now = new Date().getTime();
+            const startTime = questionStartTime ? new Date(questionStartTime).getTime() : now;
+            const elapsed = Math.floor((now - startTime) / 1000);
+            
+            if ((answersCount && answersCount >= totalPlayers) || elapsed >= 15) {
+              if (isHost && !isAdvancing) {
+                setIsAdvancing(true);
+                await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds to show results
+                await activateNextQuestion();
+                setIsAdvancing(false);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Error checking answers:', error);
+        }
+      };
+
+      const interval = setInterval(checkAllAnswered, 1000);
+      return () => clearInterval(interval);
+    }
+  }, [gameStatus, currentQuestion, players.length, questionStartTime, isHost, isAdvancing]);
 
   const handleTimeUp = async () => {
     if (!currentPlayerId || hasAnswered) return;
 
     try {
-      // Submit empty answer with penalty
+      // Check if player already answered (to prevent race conditions)
+      const { data: existingAnswer } = await supabase
+        .from('player_answers')
+        .select('id')
+        .eq('player_id', currentPlayerId)
+        .eq('question_id', currentQuestion.id)
+        .maybeSingle();
+
+      if (existingAnswer) {
+        setHasAnswered(true);
+        return; // Player already answered, don't penalize
+      }
+
+      // Submit empty answer with penalty only if no answer exists
       const { error: answerError } = await supabase
         .from('player_answers')
         .insert({
@@ -376,12 +457,14 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
       // Update player score
       const currentPlayer = players.find(p => p.id === currentPlayerId);
-      const newScore = Math.max(0, currentPlayer.score - 1);
+      if (currentPlayer) {
+        const newScore = Math.max(0, currentPlayer.score - 1);
 
-      await supabase
-        .from('players')
-        .update({ score: newScore })
-        .eq('id', currentPlayerId);
+        await supabase
+          .from('players')
+          .update({ score: newScore })
+          .eq('id', currentPlayerId);
+      }
 
       setHasAnswered(true);
 
