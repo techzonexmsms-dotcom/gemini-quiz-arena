@@ -108,14 +108,26 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
   const loadCurrentQuestion = async () => {
     try {
-      const { data: questionData, error } = await supabase
-        .from('room_questions')
-        .select('*')
-        .eq('room_id', roomData.id)
-        .eq('is_active', true)
-        .single();
+      let questionData: any = null;
 
-      if (error && error.code !== 'PGRST116') throw error;
+      if (currentQuestionId) {
+        const { data, error } = await supabase
+          .from('room_questions')
+          .select('*')
+          .eq('id', currentQuestionId)
+          .maybeSingle();
+        if (error && error.code !== 'PGRST116') throw error;
+        questionData = data;
+      } else {
+        const { data, error } = await supabase
+          .from('room_questions')
+          .select('*')
+          .eq('room_id', roomData.id)
+          .eq('is_active', true)
+          .maybeSingle();
+        if (error && error.code !== 'PGRST116') throw error;
+        questionData = data;
+      }
 
       if (questionData) {
         setCurrentQuestion(questionData);
@@ -172,12 +184,13 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           setGameStatus(newRoom.status);
           setQuestionStartTime(newRoom.question_start_time);
 
-          // If question changed, reset local timers and answered state
-          if (newRoom.current_question_id !== currentQuestionId) {
-            setCurrentQuestionId(newRoom.current_question_id ?? null);
-            setHasAnswered(false);
-            setTimeLeft(15);
-          }
+          setCurrentQuestionId((prev) => {
+            if ((newRoom.current_question_id ?? null) !== prev) {
+              setHasAnswered(false);
+              setTimeLeft(15);
+            }
+            return newRoom.current_question_id ?? null;
+          });
 
           if (newRoom.status === 'playing') {
             loadCurrentQuestion();
@@ -356,7 +369,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
       // Submit answer
       const { error: answerError } = await supabase
         .from('player_answers')
-        .insert({
+        .upsert({
           room_id: roomData.id,
           player_id: currentPlayerId,
           question_id: currentQuestion.id,
@@ -364,7 +377,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           is_correct: isCorrect,
           answered_at: new Date().toISOString(),
           points_earned: pointsEarned
-        });
+        }, { onConflict: 'player_id,question_id', ignoreDuplicates: true });
 
       if (answerError) throw answerError;
 
@@ -485,7 +498,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
       // Submit empty answer with penalty only if no answer exists
       const { error: answerError } = await supabase
         .from('player_answers')
-        .insert({
+        .upsert({
           room_id: roomData.id,
           player_id: currentPlayerId,
           question_id: currentQuestion.id,
@@ -493,7 +506,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           is_correct: false,
           answered_at: new Date().toISOString(),
           points_earned: -1
-        });
+        }, { onConflict: 'player_id,question_id', ignoreDuplicates: true });
 
       if (answerError) throw answerError;
 
