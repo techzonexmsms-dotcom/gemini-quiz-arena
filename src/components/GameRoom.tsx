@@ -61,14 +61,22 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
       setPlayers(playersData || []);
       
-      // Find current player with better matching
+      // Find current player with better matching and room host fallback
       const currentPlayer = playersData?.find(p => p.name.trim() === playerName.trim());
-      console.log('Finding player:', { playerName, playersData, currentPlayer });
+      const hostByRoomId = (roomData.host_id && playersData)
+        ? playersData.find(p => p.id === roomData.host_id)
+        : null;
+      console.log('Finding player:', { playerName, playersData, currentPlayer, hostByRoomId });
       
       if (currentPlayer) {
-        console.log('Setting host status:', currentPlayer.is_host);
-        setIsHost(currentPlayer.is_host);
+        const isPlayerHost = currentPlayer.is_host || (!!hostByRoomId && hostByRoomId.id === currentPlayer.id);
+        console.log('Setting host status:', { is_host: currentPlayer.is_host, isPlayerHost });
+        setIsHost(isPlayerHost);
         setCurrentPlayerId(currentPlayer.id);
+      } else if (hostByRoomId && hostByRoomId.name?.trim() === playerName.trim()) {
+        // Fallback: if player name matches host record name
+        setIsHost(true);
+        setCurrentPlayerId(hostByRoomId.id);
       } else {
         console.warn('Current player not found!', { playerName, availablePlayers: playersData?.map(p => p.name) });
       }
@@ -113,14 +121,19 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         setCurrentQuestion(questionData);
         
         // Check if player already answered this question
-        const { data: answerData } = await supabase
-          .from('player_answers')
-          .select('*')
-          .eq('player_id', currentPlayerId)
-          .eq('question_id', questionData.id)
-          .single();
+        const effectivePlayerId = currentPlayerId || players.find(p => p.name.trim() === playerName.trim())?.id;
+        if (effectivePlayerId) {
+          const { data: answerData } = await supabase
+            .from('player_answers')
+            .select('*')
+            .eq('player_id', effectivePlayerId)
+            .eq('question_id', questionData.id)
+            .maybeSingle();
 
-        setHasAnswered(!!answerData);
+          setHasAnswered(!!answerData);
+        } else {
+          setHasAnswered(false);
+        }
       }
     } catch (error) {
       console.error('Error loading question:', error);
@@ -220,23 +233,39 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         .update({ is_active: false })
         .eq('room_id', roomData.id);
 
-      // Get next unused question in order
-      const { data: nextQuestion, error } = await supabase
+      // Determine next question based on current question order
+      const { data: roomRowLatest } = await supabase
+        .from('rooms')
+        .select('current_question_id')
+        .eq('id', roomData.id)
+        .maybeSingle();
+
+      let currentOrder: number | null = null;
+      if (roomRowLatest?.current_question_id) {
+        const { data: currentQ } = await supabase
+          .from('room_questions')
+          .select('question_order')
+          .eq('id', roomRowLatest.current_question_id)
+          .maybeSingle();
+        currentOrder = currentQ?.question_order ?? null;
+      }
+
+      const { data: nextQuestion, error: nextErr } = await supabase
         .from('room_questions')
         .select('*')
         .eq('room_id', roomData.id)
-        .eq('is_active', false)
-        .order('question_order')
+        .gt('question_order', currentOrder ?? -1)
+        .order('question_order', { ascending: true })
         .limit(1)
         .maybeSingle();
 
-      if (error) {
-        console.error('Error fetching next question:', error);
+      if (nextErr) {
+        console.error('Error fetching next question:', nextErr);
         return;
       }
 
       if (!nextQuestion) {
-        // No more questions, generate new ones
+        // No more questions ahead, generate new ones
         console.log('No more questions available, generating new ones...');
         
         await supabase.functions.invoke('generate-questions', {
@@ -246,18 +275,17 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         // Wait a bit for generation to complete
         await new Promise(resolve => setTimeout(resolve, 2000));
         
-        // Try to get a new question
+        // Try to get a newly generated question (pick the latest)
         const { data: newQuestion, error: newError } = await supabase
           .from('room_questions')
           .select('*')
           .eq('room_id', roomData.id)
-          .eq('is_active', false)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
 
         if (newError || !newQuestion) {
-          console.error('Failed to get new question after generation');
+          console.error('Failed to get new question after generation', newError);
           return;
         }
         
@@ -315,6 +343,9 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         pointsEarned = -1;
       }
 
+      // Mark answered immediately to avoid timeout race
+      setHasAnswered(true);
+
       // Submit answer
       const { error: answerError } = await supabase
         .from('player_answers')
@@ -344,7 +375,6 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
       if (scoreError) throw scoreError;
 
-      setHasAnswered(true);
 
       toast({
         title: isCorrect ? "إجابة صحيحة! 🎉" : "إجابة خاطئة",
