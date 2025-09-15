@@ -170,6 +170,15 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         (payload) => {
           const newRoom = payload.new as any;
           setGameStatus(newRoom.status);
+          setQuestionStartTime(newRoom.question_start_time);
+
+          // If question changed, reset local timers and answered state
+          if (newRoom.current_question_id !== currentQuestionId) {
+            setCurrentQuestionId(newRoom.current_question_id ?? null);
+            setHasAnswered(false);
+            setTimeLeft(15);
+          }
+
           if (newRoom.status === 'playing') {
             loadCurrentQuestion();
           }
