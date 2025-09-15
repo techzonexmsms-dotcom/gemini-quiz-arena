@@ -234,108 +234,106 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
   const activateNextQuestion = async () => {
     if (isAdvancing) return; // Prevent multiple simultaneous calls
-    
     try {
-      // Deactivate all current questions
+      setIsAdvancing(true);
+
+      // Deactivate only the currently active question to minimize churn
       await supabase
         .from('room_questions')
         .update({ is_active: false })
-        .eq('room_id', roomData.id);
+        .eq('room_id', roomData.id)
+        .eq('is_active', true);
 
-      // Determine next question based on current question order
+      // Get the current question created_at to sequence by time
       const { data: roomRowLatest } = await supabase
         .from('rooms')
         .select('current_question_id')
         .eq('id', roomData.id)
         .maybeSingle();
 
-      let currentOrder: number | null = null;
+      let currentCreatedAt: string | null = null;
       if (roomRowLatest?.current_question_id) {
         const { data: currentQ } = await supabase
           .from('room_questions')
-          .select('question_order')
+          .select('created_at')
           .eq('id', roomRowLatest.current_question_id)
           .maybeSingle();
-        currentOrder = currentQ?.question_order ?? null;
+        currentCreatedAt = currentQ?.created_at ?? null;
       }
 
-      const { data: nextQuestion, error: nextErr } = await supabase
+      // Try to find the next question by created_at (ascending)
+      let { data: nextQuestion, error: nextErr } = await supabase
         .from('room_questions')
         .select('*')
         .eq('room_id', roomData.id)
-        .gt('question_order', currentOrder ?? -1)
-        .order('question_order', { ascending: true })
+        .gt('created_at', currentCreatedAt ?? '1970-01-01T00:00:00.000Z')
+        .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();
 
       if (nextErr) {
-        console.error('Error fetching next question:', nextErr);
-        return;
+        console.error('Error fetching next question by created_at:', nextErr);
       }
 
       if (!nextQuestion) {
-        // No more questions ahead, generate new ones
-        console.log('No more questions available, generating new ones...');
-        
-        await supabase.functions.invoke('generate-questions', {
-          body: { roomId: roomData.id }
-        });
-        
-        // Wait a bit for generation to complete
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Try to get a newly generated question (pick the latest)
-        const { data: newQuestion, error: newError } = await supabase
+        // No more questions ahead, generate new ones and pick the FIRST of the new batch
+        const { data: latestBefore } = await supabase
           .from('room_questions')
-          .select('*')
+          .select('created_at')
           .eq('room_id', roomData.id)
           .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
 
+        const prevLatest = latestBefore?.created_at ?? null;
+
+        await supabase.functions.invoke('generate-questions', {
+          body: { roomId: roomData.id }
+        });
+
+        // Wait a bit for generation to complete
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+
+        const { data: newQuestion, error: newError } = await supabase
+          .from('room_questions')
+          .select('*')
+          .eq('room_id', roomData.id)
+          .gt('created_at', prevLatest ?? '1970-01-01T00:00:00.000Z')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .maybeSingle();
+
         if (newError || !newQuestion) {
           console.error('Failed to get new question after generation', newError);
+          setIsAdvancing(false);
           return;
         }
-        
-        // Activate new question
-        await supabase
-          .from('room_questions')
-          .update({ is_active: true })
-          .eq('id', newQuestion.id);
 
-        // Update room with new question and start time
-        await supabase
-          .from('rooms')
-          .update({ 
-            current_question_id: newQuestion.id,
-            question_start_time: new Date().toISOString()
-          })
-          .eq('id', roomData.id);
-
-      } else {
-        // Activate next question
-        await supabase
-          .from('room_questions')
-          .update({ is_active: true })
-          .eq('id', nextQuestion.id);
-
-        // Update room with question info and start time
-        await supabase
-          .from('rooms')
-          .update({ 
-            current_question_id: nextQuestion.id,
-            question_start_time: new Date().toISOString()
-          })
-          .eq('id', roomData.id);
+        nextQuestion = newQuestion;
       }
+
+      // Activate next question
+      await supabase
+        .from('room_questions')
+        .update({ is_active: true })
+        .eq('id', nextQuestion.id);
+
+      // Update room with question info and start time
+      await supabase
+        .from('rooms')
+        .update({
+          current_question_id: nextQuestion.id,
+          question_start_time: new Date().toISOString(),
+        })
+        .eq('id', roomData.id);
 
       // Reset local state for new question
       setTimeLeft(15);
       setHasAnswered(false);
-
     } catch (error) {
       console.error('Error activating next question:', error);
+    } finally {
+      setIsAdvancing(false);
     }
   };
 
