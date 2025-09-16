@@ -274,12 +274,12 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         currentCreatedAt = currentQ?.created_at ?? null;
       }
 
-      // Try to find the next question by created_at (ascending)
+      // Try to find the next unshown question
       let { data: nextQuestion, error: nextErr } = await supabase
         .from('room_questions')
         .select('*')
         .eq('room_id', roomData.id)
-        .gt('created_at', currentCreatedAt ?? '1970-01-01T00:00:00.000Z')
+        .is('shown_at', null)
         .order('created_at', { ascending: true })
         .limit(1)
         .maybeSingle();
@@ -289,17 +289,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
       }
 
       if (!nextQuestion) {
-        // No more questions ahead, generate new ones and pick the FIRST of the new batch
-        const { data: latestBefore } = await supabase
-          .from('room_questions')
-          .select('created_at')
-          .eq('room_id', roomData.id)
-          .order('created_at', { ascending: false })
-          .limit(1)
-          .maybeSingle();
-
-        const prevLatest = latestBefore?.created_at ?? null;
-
+        // No more unshown questions, generate new ones
         await supabase.functions.invoke('generate-questions', {
           body: { roomId: roomData.id }
         });
@@ -311,7 +301,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           .from('room_questions')
           .select('*')
           .eq('room_id', roomData.id)
-          .gt('created_at', prevLatest ?? '1970-01-01T00:00:00.000Z')
+          .is('shown_at', null)
           .order('created_at', { ascending: true })
           .limit(1)
           .maybeSingle();
@@ -325,10 +315,14 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         nextQuestion = newQuestion;
       }
 
-      // Activate next question
+      // Mark question as shown and activate it
+      const nowTime = new Date().toISOString();
       await supabase
         .from('room_questions')
-        .update({ is_active: true })
+        .update({ 
+          is_active: true,
+          shown_at: nowTime
+        })
         .eq('id', nextQuestion.id);
 
       // Update room with question info and start time
@@ -336,7 +330,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         .from('rooms')
         .update({
           current_question_id: nextQuestion.id,
-          question_start_time: new Date().toISOString(),
+          question_start_time: nowTime,
         })
         .eq('id', roomData.id);
 

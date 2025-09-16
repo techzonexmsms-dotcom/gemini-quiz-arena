@@ -144,6 +144,7 @@ export type Database = {
           question_order: number
           question_text: string
           room_id: string
+          shown_at: string | null
         }
         Insert: {
           correct_answer: number
@@ -154,6 +155,7 @@ export type Database = {
           question_order: number
           question_text: string
           room_id: string
+          shown_at?: string | null
         }
         Update: {
           correct_answer?: number
@@ -164,6 +166,7 @@ export type Database = {
           question_order?: number
           question_text?: string
           room_id?: string
+          shown_at?: string | null
         }
         Relationships: [
           {

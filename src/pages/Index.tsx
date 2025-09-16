@@ -208,7 +208,7 @@ const Index = () => {
           <div className="flex items-center justify-center gap-3 mb-6">
             <Brain className="w-16 h-16 text-white animate-pulse drop-shadow-lg" />
             <h1 className="text-5xl md:text-7xl font-bold drop-shadow-lg">
-              Gemini Quiz Arena
+              ARENA BATTLE QUIZ
             </h1>
           </div>
           <p className="text-xl md:text-2xl opacity-90 drop-shadow-md max-w-2xl mx-auto">
