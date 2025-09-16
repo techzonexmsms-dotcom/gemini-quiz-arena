@@ -8,6 +8,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { GameRoom } from "@/components/GameRoom";
 import { Trophy, Users, Brain, Zap } from "lucide-react";
 import heroBackground from "@/assets/hero-background.jpg";
+import { useNavigate } from "react-router-dom";
 
 const Index = () => {
   const [gameState, setGameState] = useState<'menu' | 'room'>('menu');
@@ -17,6 +18,7 @@ const Index = () => {
   const [maxPlayers, setMaxPlayers] = useState(2);
   const [loading, setLoading] = useState(false);
   const { toast } = useToast();
+  const navigate = useNavigate();
 
   const generateRoomCode = () => {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
@@ -55,14 +57,16 @@ const Index = () => {
 
       if (roomError) throw roomError;
 
-      // Add player as host
-      const { error: playerError } = await supabase
+// Add player as host
+      const { data: insertedHost, error: playerError } = await supabase
         .from('players')
         .insert({
           room_id: room.id,
           name: playerName.trim(),
           is_host: true
-        });
+        })
+        .select('id, name')
+        .single();
 
       if (playerError) throw playerError;
 
@@ -75,8 +79,14 @@ const Index = () => {
         console.warn('Failed to generate questions initially:', questionsError);
       }
 
-      setRoomData(room);
-      setGameState('room');
+// Persist host identity and navigate to room link
+      if (insertedHost?.id) {
+        localStorage.setItem(
+          `arena:room:${room.id}`,
+          JSON.stringify({ playerId: insertedHost.id, name: playerName.trim() })
+        );
+      }
+      navigate(`/room/${newRoomCode}`);
       
       toast({
         title: "تم إنشاء الغرفة!",
@@ -153,14 +163,16 @@ const Index = () => {
         return;
       }
 
-      // Add player
-      const { error: playerError } = await supabase
+// Add player
+      const { data: insertedPlayer, error: playerError } = await supabase
         .from('players')
         .insert({
           room_id: room.id,
           name: playerName.trim(),
           is_host: false
-        });
+        })
+        .select('id, name')
+        .single();
 
       if (playerError) throw playerError;
 
@@ -172,8 +184,11 @@ const Index = () => {
 
       if (updateError) throw updateError;
 
-      setRoomData(room);
-      setGameState('room');
+localStorage.setItem(
+        `arena:room:${room.id}`,
+        JSON.stringify({ playerId: insertedPlayer?.id, name: playerName.trim() })
+      );
+      navigate(`/room/${room.room_code}`);
       
       toast({
         title: "تم الانضمام للغرفة!",
