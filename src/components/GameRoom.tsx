@@ -20,7 +20,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [gameStatus, setGameStatus] = useState(roomData.status);
   const [timeLeft, setTimeLeft] = useState(15);
-  const [hasAnswered, setHasAnswered] = useState(false);
+  const [answeredQuestions, setAnsweredQuestions] = useState<Set<string>>(new Set());
   const [isHost, setIsHost] = useState(false);
   const [winner, setWinner] = useState<any>(null);
   const [currentPlayerId, setCurrentPlayerId] = useState<string>('');
@@ -142,9 +142,15 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
             .eq('question_id', questionData.id)
             .maybeSingle();
 
-          setHasAnswered(!!answerData);
-        } else {
-          setHasAnswered(false);
+          setAnsweredQuestions(prev => {
+            if (answerData) {
+              return new Set([...prev, questionData.id]);
+            } else {
+              const newSet = new Set(prev);
+              newSet.delete(questionData.id);
+              return newSet;
+            }
+          });
         }
       }
     } catch (error) {
@@ -186,7 +192,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
           setCurrentQuestionId((prev) => {
             if ((newRoom.current_question_id ?? null) !== prev) {
-              setHasAnswered(false);
+              // Don't reset answeredQuestions here as it's managed by question ID
               setTimeLeft(15);
             }
             return newRoom.current_question_id ?? null;
@@ -336,7 +342,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
       // Reset local state for new question
       setTimeLeft(15);
-      setHasAnswered(false);
+      // hasAnswered will be determined by answeredQuestions set
     } catch (error) {
       console.error('Error activating next question:', error);
     } finally {
@@ -345,6 +351,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
   };
 
   const submitAnswer = async (selectedAnswer: number) => {
+    const hasAnswered = answeredQuestions.has(currentQuestion?.id);
     if (!currentQuestion || hasAnswered || !currentPlayerId) return;
 
     try {
@@ -358,7 +365,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
       }
 
       // Mark answered immediately to avoid timeout race
-      setHasAnswered(true);
+      setAnsweredQuestions(prev => new Set([...prev, currentQuestion.id]));
 
       // Submit answer
       const { error: answerError } = await supabase
@@ -425,14 +432,14 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         
         setTimeLeft(remaining);
         
-        if (remaining <= 0 && !hasAnswered) {
+        if (remaining <= 0 && !answeredQuestions.has(currentQuestion.id)) {
           handleTimeUp();
         }
       }, 1000);
 
       return () => clearInterval(timer);
     }
-  }, [gameStatus, currentQuestion, questionStartTime, hasAnswered]);
+  }, [gameStatus, currentQuestion, questionStartTime, answeredQuestions]);
 
   // Check if all players answered and advance to next question
   useEffect(() => {
@@ -473,7 +480,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
   }, [gameStatus, currentQuestion, players.length, questionStartTime, isHost, isAdvancing]);
 
   const handleTimeUp = async () => {
-    if (!currentPlayerId || hasAnswered) return;
+    if (!currentPlayerId || answeredQuestions.has(currentQuestion?.id)) return;
 
     try {
       // Check if player already answered (to prevent race conditions)
@@ -485,7 +492,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
         .maybeSingle();
 
       if (existingAnswer) {
-        setHasAnswered(true);
+        setAnsweredQuestions(prev => new Set([...prev, currentQuestion.id]));
         return; // Player already answered, don't penalize
       }
 
@@ -515,7 +522,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           .eq('id', currentPlayerId);
       }
 
-      setHasAnswered(true);
+      setAnsweredQuestions(prev => new Set([...prev, currentQuestion.id]));
 
       toast({
         title: "انتهى الوقت! ⏰",
@@ -609,10 +616,10 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
           )}
 
           {gameStatus === 'playing' && currentQuestion && (
-            <QuestionCard 
+            <QuestionCard
               question={currentQuestion}
               timeLeft={timeLeft}
-              hasAnswered={hasAnswered}
+              hasAnswered={answeredQuestions.has(currentQuestion.id)}
               onSubmitAnswer={submitAnswer}
             />
           )}
