@@ -321,6 +321,25 @@ export const GameRoom = ({ roomData, playerName, playerId, onLeaveRoom }: GameRo
         })
         .eq('id', nextQuestion.id);
 
+      // تسجيل استخدام السؤال في الجدول العالمي لمنع التكرار
+      const questionHash = await generateQuestionHash(nextQuestion.question_text);
+      
+      // محاولة إدراج السؤال الجديد أو تحديث الموجود
+      const { error: upsertError } = await supabase
+        .from('global_question_usage')
+        .upsert({
+          question_text: nextQuestion.question_text,
+          question_hash: questionHash,
+          last_used_at: nowTime,
+          usage_count: 1
+        }, {
+          onConflict: 'question_hash'
+        });
+
+      if (upsertError) {
+        console.warn('Could not track global question usage:', upsertError);
+      }
+
       // Update room with question info and start time
       await supabase
         .from('rooms')
@@ -339,6 +358,16 @@ export const GameRoom = ({ roomData, playerName, playerId, onLeaveRoom }: GameRo
     } finally {
       setIsAdvancing(false);
     }
+  };
+
+  // دالة لحساب هاش السؤال (نفس الطريقة المستخدمة في الخادم)
+  const generateQuestionHash = async (questionText: string): Promise<string> => {
+    const normalized = questionText.toLowerCase().trim();
+    const encoder = new TextEncoder();
+    const data = encoder.encode(normalized);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
   };
 
   const submitAnswer = async (selectedAnswer: number) => {
