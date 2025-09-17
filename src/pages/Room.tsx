@@ -191,7 +191,7 @@ const Room = () => {
 
   if (ready && storedPlayer) {
     return (
-      <GameRoom roomData={room} playerName={storedPlayer.name} onLeaveRoom={handleLeave} />
+      <GameRoom roomData={room} playerName={storedPlayer.name} playerId={storedPlayer.playerId} onLeaveRoom={handleLeave} />
     );
   }
 

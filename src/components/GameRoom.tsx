@@ -12,10 +12,11 @@ import { GameResults } from "./GameResults";
 interface GameRoomProps {
   roomData: any;
   playerName: string;
+  playerId?: string;
   onLeaveRoom: () => void;
 }
 
-export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) => {
+export const GameRoom = ({ roomData, playerName, playerId, onLeaveRoom }: GameRoomProps) => {
   const [players, setPlayers] = useState<any[]>([]);
   const [currentQuestion, setCurrentQuestion] = useState<any>(null);
   const [gameStatus, setGameStatus] = useState(roomData.status);
@@ -61,24 +62,21 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
 
       setPlayers(playersData || []);
       
-      // Find current player with better matching and room host fallback
-      const currentPlayer = playersData?.find(p => p.name.trim() === playerName.trim());
+      // Resolve current player (prefer explicit id)
+      const byId = playerId ? playersData?.find(p => p.id === playerId) : null;
+      const byName = playersData?.find(p => p.name.trim() === playerName.trim());
+      const currentPlayer = byId ?? byName ?? null;
       const hostByRoomId = (roomData.host_id && playersData)
         ? playersData.find(p => p.id === roomData.host_id)
         : null;
-      console.log('Finding player:', { playerName, playersData, currentPlayer, hostByRoomId });
+      console.log('Finding player:', { playerName, playerId, currentPlayer, hostByRoomId });
       
       if (currentPlayer) {
-        const isPlayerHost = currentPlayer.is_host || (!!hostByRoomId && hostByRoomId.id === currentPlayer.id);
-        console.log('Setting host status:', { is_host: currentPlayer.is_host, isPlayerHost });
+        const isPlayerHost = !!currentPlayer.is_host || (!!hostByRoomId && hostByRoomId.id === currentPlayer.id);
         setIsHost(isPlayerHost);
         setCurrentPlayerId(currentPlayer.id);
-      } else if (hostByRoomId && hostByRoomId.name?.trim() === playerName.trim()) {
-        // Fallback: if player name matches host record name
-        setIsHost(true);
-        setCurrentPlayerId(hostByRoomId.id);
       } else {
-        console.warn('Current player not found!', { playerName, availablePlayers: playersData?.map(p => p.name) });
+        console.warn('Current player not found!', { playerName, playerId, availablePlayers: playersData?.map(p => p.name) });
       }
 
       // Update room state
@@ -225,15 +223,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
     if (!isHost) return;
 
     try {
-      // Update room status to playing
-      const { error } = await supabase
-        .from('rooms')
-        .update({ status: 'playing' })
-        .eq('id', roomData.id);
-
-      if (error) throw error;
-
-      // Activate first question
+      // Activate first question and set room status in the same update to avoid race
       await activateNextQuestion();
 
       toast({
@@ -335,6 +325,7 @@ export const GameRoom = ({ roomData, playerName, onLeaveRoom }: GameRoomProps) =
       await supabase
         .from('rooms')
         .update({
+          status: 'playing',
           current_question_id: nextQuestion.id,
           question_start_time: nowTime,
         })
