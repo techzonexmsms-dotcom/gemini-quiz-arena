@@ -14,6 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
+      global_question_usage: {
+        Row: {
+          created_at: string
+          id: string
+          last_used_at: string
+          question_hash: string
+          question_text: string
+          usage_count: number
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          last_used_at?: string
+          question_hash: string
+          question_text: string
+          usage_count?: number
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          last_used_at?: string
+          question_hash?: string
+          question_text?: string
+          usage_count?: number
+        }
+        Relationships: []
+      }
       player_answers: {
         Row: {
           answered_at: string | null
@@ -222,9 +249,17 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_old_global_usage: {
+        Args: Record<PropertyKey, never>
+        Returns: undefined
+      }
       cleanup_old_questions: {
         Args: Record<PropertyKey, never>
         Returns: undefined
+      }
+      generate_question_hash: {
+        Args: { question_text: string }
+        Returns: string
       }
       generate_room_code: {
         Args: Record<PropertyKey, never>
