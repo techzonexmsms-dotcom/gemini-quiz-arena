@@ -207,9 +207,10 @@ serve(async (req) => {
         
         console.log(`Batch ${batch + 1} completed: ${uniqueQuestions.length} unique questions (Total: ${totalGeneratedQuestions})`);
 
-        // انتظار قصير بين الدفعات لتجنب rate limiting
+        // انتظار 2 دقيقة بين الدفعات كما طلب المستخدم
         if (batch < maxBatches - 1) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log(`Waiting 2 minutes before next batch...`);
+          await new Promise(resolve => setTimeout(resolve, 120000)); // 2 دقيقة = 120000 مللي ثانية
         }
 
       } catch (error) {
