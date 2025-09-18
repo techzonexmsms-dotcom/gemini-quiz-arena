@@ -2,3 +2,6 @@ project_id = "pwvdlmgpgyfpzoyrduok"
 
 [functions.generate-questions]
 verify_jwt = false
+
+[functions.daily-questions-generator]
+verify_jwt = false
