@@ -163,6 +163,7 @@ export type Database = {
       }
       room_questions: {
         Row: {
+          category: string | null
           correct_answer: number
           created_at: string
           id: string
@@ -174,6 +175,7 @@ export type Database = {
           shown_at: string | null
         }
         Insert: {
+          category?: string | null
           correct_answer: number
           created_at?: string
           id?: string
@@ -185,6 +187,7 @@ export type Database = {
           shown_at?: string | null
         }
         Update: {
+          category?: string | null
           correct_answer?: number
           created_at?: string
           id?: string
